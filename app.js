@@ -6,7 +6,8 @@
         activity: 'ppsc_activity_v3',
         meta: 'ppsc_meta_v1'
     };
-    const DATA_FILE_PATH = 'data.json';
+    const API_DATA_ENDPOINT = '/api/data';
+    const DATA_FILE_FALLBACK = 'data.json';
 
     const BANKS = [
         'Bank of Palestine',
@@ -34,7 +35,6 @@
     const state = {
         events: [],
         activities: [],
-        linkedDataFileHandle: null,
         filters: {
             banks: new Set(BANKS),
             systems: new Set(SYSTEMS)
@@ -100,8 +100,22 @@
     }
 
     async function loadProjectDataFile() {
+        const sources = [API_DATA_ENDPOINT, DATA_FILE_FALLBACK];
+
+        for (const source of sources) {
+            const loaded = await tryLoadProjectDataFromSource(source);
+            if (loaded) {
+                return loaded;
+            }
+        }
+
+        state.storageWarnings.push('Project data file could not be loaded. Using browser storage fallback.');
+        return null;
+    }
+
+    async function tryLoadProjectDataFromSource(source) {
         try {
-            const response = await fetch(DATA_FILE_PATH, { cache: 'no-store' });
+            const response = await fetch(source, { cache: 'no-store' });
             if (!response.ok) {
                 return null;
             }
@@ -143,7 +157,6 @@
 
         el.printBtn = document.getElementById('printBtn');
         el.saveJsonBtn = document.getElementById('saveJsonBtn');
-        el.linkDataFileBtn = document.getElementById('linkDataFileBtn');
 
         el.bankDropdownToggle = document.getElementById('bankDropdownToggle');
         el.systemDropdownToggle = document.getElementById('systemDropdownToggle');
@@ -226,9 +239,6 @@
             });
         });
 
-        if (el.linkDataFileBtn) {
-            el.linkDataFileBtn.addEventListener('click', linkProjectDataFile);
-        }
         if (el.saveJsonBtn) {
             el.saveJsonBtn.addEventListener('click', exportDataSnapshot);
         }
@@ -938,90 +948,25 @@
 
     async function exportDataSnapshot() {
         const snapshot = buildProjectDataDocument();
-        const content = JSON.stringify(snapshot, null, 2);
-
-        const directWriteDone = await writeSnapshotToLinkedFile(content);
-        if (directWriteDone) {
-            return;
-        }
-        showToast('Link data.json first, then Save to write directly to the project file.', 'warning', 5000);
-    }
-
-    async function linkProjectDataFile() {
-        const handle = await getOrRequestDataFileHandle(true);
-        if (!handle) {
-            return;
-        }
-        showToast('data.json linked. Save now writes directly to this file.', 'success');
-    }
-
-    async function writeSnapshotToLinkedFile(content) {
-        const handle = await getOrRequestDataFileHandle(false);
-        if (!handle) {
-            return false;
-        }
-
         try {
-            const writable = await handle.createWritable();
-            await writable.write(content);
-            await writable.close();
-            logActivity('report', 'Project data saved.', `${state.events.length} events saved directly to data.json`);
-            showToast('Saved directly to linked data.json file.', 'success');
-            return true;
-        } catch (error) {
-            showToast('Direct save failed. Re-link data.json and try again.', 'error', 5000);
-            state.linkedDataFileHandle = null;
-            return false;
-        }
-    }
-
-    async function getOrRequestDataFileHandle(forcePick) {
-        if (!window.showOpenFilePicker) {
-            return null;
-        }
-
-        if (!forcePick && state.linkedDataFileHandle) {
-            const permission = await state.linkedDataFileHandle.queryPermission({ mode: 'readwrite' });
-            if (permission === 'granted') {
-                return state.linkedDataFileHandle;
-            }
-            const request = await state.linkedDataFileHandle.requestPermission({ mode: 'readwrite' });
-            if (request === 'granted') {
-                return state.linkedDataFileHandle;
-            }
-        }
-
-        try {
-            const [handle] = await window.showOpenFilePicker({
-                multiple: false,
-                types: [{
-                    description: 'JSON Files',
-                    accept: { 'application/json': ['.json'] }
-                }]
+            const response = await fetch(API_DATA_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(snapshot)
             });
 
-            if (!handle) {
-                return null;
+            if (!response.ok) {
+                throw new Error(`Save failed with status ${response.status}`);
             }
 
-            if (handle.name !== 'data.json') {
-                showToast('Tip: choose your project data.json file for direct Git-tracked saves.', 'warning', 5000);
-            }
-
-            const permission = await handle.requestPermission({ mode: 'readwrite' });
-            if (permission !== 'granted') {
-                showToast('Write permission denied for selected file.', 'warning');
-                return null;
-            }
-
-            state.linkedDataFileHandle = handle;
-            return handle;
+            safeWrite(STORAGE_KEYS.events, state.events);
+            safeWrite(STORAGE_KEYS.activity, state.activities);
+            logActivity('report', 'Project data saved.', `${state.events.length} events written to data.json`);
+            showToast('Saved directly to data.json.', 'success');
         } catch (error) {
-            if (error && error.name === 'AbortError') {
-                return null;
-            }
-            showToast('Could not link data file. Use Save fallback download if needed.', 'warning', 5000);
-            return null;
+            showToast('Save failed. Run the local API server with npm start.', 'error', 5000);
         }
     }
 
