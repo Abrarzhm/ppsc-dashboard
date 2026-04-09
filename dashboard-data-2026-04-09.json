@@ -1,8 +1,78 @@
 {
   "version": 1,
-  "exportedAt": "2026-04-09T09:23:46.244Z",
-  "events": [],
+  "exportedAt": "2026-04-09T09:27:50.396Z",
+  "events": [
+    {
+      "id": "EVT-3001",
+      "type": "Emergency",
+      "bank": "Jordan Commercial Bank",
+      "system": "ESADAD",
+      "impact": "Medium",
+      "start": "2026-04-09T12:25",
+      "end": "2026-04-10T12:25",
+      "notes": "",
+      "durationHours": 24,
+      "createdAt": 1775726749037,
+      "updatedAt": 1775726749037
+    }
+  ],
   "activities": [
+    {
+      "id": "ACT-1775726765940-192",
+      "type": "report",
+      "title": "JSON snapshot imported.",
+      "message": "1 events loaded from dashboard-data-2026-04-09.json",
+      "timestamp": 1775726765940
+    },
+    {
+      "id": "ACT-1775726749037-114",
+      "type": "create",
+      "title": "New maintenance event created.",
+      "message": "EVT-3001 · Jordan Commercial Bank · ESADAD",
+      "timestamp": 1775726749037
+    },
+    {
+      "id": "ACT-1775726704236-592",
+      "type": "report",
+      "title": "JSON snapshot saved.",
+      "message": "0 events saved to local file",
+      "timestamp": 1775726704236
+    },
+    {
+      "id": "ACT-1775726698734-116",
+      "type": "delete",
+      "title": "All maintenance events cleared.",
+      "message": "8 events removed",
+      "timestamp": 1775726698734
+    },
+    {
+      "id": "ACT-1775726693040-932",
+      "type": "report",
+      "title": "JSON snapshot imported.",
+      "message": "8 events loaded from dashboard-data-2026-04-09.json",
+      "timestamp": 1775726693040
+    },
+    {
+      "id": "ACT-1775726658534-21",
+      "type": "report",
+      "title": "JSON snapshot saved.",
+      "message": "0 events saved to local file",
+      "timestamp": 1775726658534
+    },
+    {
+      "id": "ACT-1775726653004-950",
+      "type": "delete",
+      "title": "All maintenance events cleared.",
+      "message": "8 events removed",
+      "timestamp": 1775726653004
+    },
+    {
+      "id": "ACT-1775726635123-287",
+      "type": "report",
+      "title": "JSON snapshot saved.",
+      "message": "0 events saved to local file",
+      "timestamp": 1775726635123
+    },
     {
       "id": "ACT-1775726624765-995",
       "type": "delete",
