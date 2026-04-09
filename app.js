@@ -6,6 +6,7 @@
         activity: 'ppsc_activity_v3',
         meta: 'ppsc_meta_v1'
     };
+    const DATA_FILE_PATH = 'data.json';
 
     const BANKS = [
         'Bank of Palestine',
@@ -58,11 +59,12 @@
 
     const el = {};
 
-    function init() {
+    async function init() {
         cacheElements();
         state.meta = loadMeta();
-        state.events = loadEvents();
-        state.activities = loadActivities();
+        const projectData = await loadProjectDataFile();
+        state.events = loadEvents(projectData ? projectData.events : null);
+        state.activities = loadActivities(projectData ? projectData.activities : null);
         applyMetaToUI();
 
         populateFormSelects();
@@ -76,6 +78,57 @@
             state.storageWarnings.forEach((warning) => {
                 showToast(warning, 'warning', 7000);
             });
+        }
+    }
+
+    function isValidEventShape(event) {
+        if (!event || typeof event !== 'object') {
+            return false;
+        }
+        const hasRequired = ['id', 'type', 'bank', 'system', 'impact', 'start', 'end'].every((field) => Boolean(event[field]));
+        if (!hasRequired) {
+            return false;
+        }
+        const start = new Date(event.start).getTime();
+        const end = new Date(event.end).getTime();
+        return Number.isFinite(start) && Number.isFinite(end) && end > start;
+    }
+
+    function isValidActivityShape(entry) {
+        return entry && typeof entry.title === 'string' && Number.isFinite(entry.timestamp);
+    }
+
+    async function loadProjectDataFile() {
+        try {
+            const response = await fetch(DATA_FILE_PATH, { cache: 'no-store' });
+            if (!response.ok) {
+                return null;
+            }
+
+            const payload = await response.json();
+            if (!payload || typeof payload !== 'object' || !Array.isArray(payload.events)) {
+                state.storageWarnings.push('Project data.json is invalid. Falling back to browser storage data.');
+                return null;
+            }
+
+            const valid = payload.events.filter(isValidEventShape).map(normalizeEvent);
+            if (!valid.length) {
+                state.storageWarnings.push('Project data.json has no valid events. Falling back to browser storage data.');
+                return null;
+            }
+
+            const validActivities = Array.isArray(payload.activities)
+                ? payload.activities.filter(isValidActivityShape).slice(0, 100)
+                : [];
+
+            safeWrite(STORAGE_KEYS.events, valid);
+            safeWrite(STORAGE_KEYS.activity, validActivities);
+            return {
+                events: valid,
+                activities: validActivities
+            };
+        } catch (error) {
+            return null;
         }
     }
 
@@ -929,16 +982,9 @@
     }
 
     async function exportDataSnapshot() {
-        const snapshot = {
-            version: 1,
-            exportedAt: new Date().toISOString(),
-            events: state.events,
-            activities: state.activities
-        };
+        const snapshot = buildProjectDataDocument();
         const content = JSON.stringify(snapshot, null, 2);
-        const now = new Date();
-        const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        const fileName = `dashboard-data-${stamp}.json`;
+        const fileName = 'data.json';
 
         if (window.showSaveFilePicker) {
             try {
@@ -952,8 +998,8 @@
                 const writable = await handle.createWritable();
                 await writable.write(content);
                 await writable.close();
-                logActivity('report', 'JSON snapshot saved.', `${state.events.length} events saved to local file`);
-                showToast('Data file saved. Git can now detect the JSON file change.', 'success');
+                logActivity('report', 'Project data saved.', `${state.events.length} events saved to ${fileName}`);
+                showToast('data.json saved. Git can now detect file changes.', 'success');
                 return;
             } catch (error) {
                 if (error && error.name === 'AbortError') {
@@ -972,8 +1018,35 @@
         anchor.remove();
         URL.revokeObjectURL(url);
 
-        logActivity('report', 'JSON snapshot exported.', `${state.events.length} events in snapshot`);
-        showToast('Data snapshot downloaded. Commit the JSON file to GitHub.', 'success');
+        logActivity('report', 'Project data exported.', `${state.events.length} events exported as ${fileName}`);
+        showToast('data.json downloaded. Move it into the project root, then commit.', 'success');
+    }
+
+    function toSerializableEvent(event) {
+        return {
+            id: event.id,
+            type: event.type,
+            bank: event.bank,
+            system: event.system,
+            impact: event.impact,
+            start: event.start,
+            end: event.end,
+            notes: event.notes || ''
+        };
+    }
+
+    function buildProjectDataDocument() {
+        const events = state.events
+            .map(normalizeEvent)
+            .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+            .map(toSerializableEvent);
+
+        return {
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            events,
+            activities: state.activities.slice(0, 100)
+        };
     }
 
     function importDataSnapshot(event) {
@@ -1013,21 +1086,6 @@
     }
 
     function validateImportedSnapshot(payload) {
-        const eventValidator = (entry) => {
-            if (!entry || typeof entry !== 'object') {
-                return false;
-            }
-            const hasRequired = ['id', 'type', 'bank', 'system', 'impact', 'start', 'end'].every((field) => Boolean(entry[field]));
-            if (!hasRequired) {
-                return false;
-            }
-            const start = new Date(entry.start).getTime();
-            const end = new Date(entry.end).getTime();
-            return Number.isFinite(start) && Number.isFinite(end) && end > start;
-        };
-
-        const activityValidator = (entry) => entry && typeof entry.title === 'string' && Number.isFinite(entry.timestamp);
-
         if (!payload || typeof payload !== 'object') {
             throw new Error('Snapshot must be an object.');
         }
@@ -1036,13 +1094,13 @@
             throw new Error('Snapshot events array missing.');
         }
 
-        const validEvents = payload.events.filter(eventValidator);
+        const validEvents = payload.events.filter(isValidEventShape);
         if (!validEvents.length) {
             throw new Error('Snapshot has no valid events.');
         }
 
         const validActivities = Array.isArray(payload.activities)
-            ? payload.activities.filter(activityValidator).slice(0, 100)
+            ? payload.activities.filter(isValidActivityShape).slice(0, 100)
             : [];
 
         return {
@@ -1210,19 +1268,10 @@
         clearConflicts();
     }
 
-    function loadEvents() {
-        const validator = (event) => {
-            if (!event || typeof event !== 'object') {
-                return false;
-            }
-            const hasRequired = ['id', 'type', 'bank', 'system', 'impact', 'start', 'end'].every((field) => Boolean(event[field]));
-            if (!hasRequired) {
-                return false;
-            }
-            const start = new Date(event.start).getTime();
-            const end = new Date(event.end).getTime();
-            return Number.isFinite(start) && Number.isFinite(end) && end > start;
-        };
+    function loadEvents(fileEvents = null) {
+        if (Array.isArray(fileEvents) && fileEvents.length) {
+            return fileEvents.map(normalizeEvent);
+        }
 
         const fallback = () => {
             const seeded = seedEvents();
@@ -1241,7 +1290,7 @@
                 throw new Error('Stored event data is not an array.');
             }
 
-            const valid = parsed.filter(validator).map(normalizeEvent);
+            const valid = parsed.filter(isValidEventShape).map(normalizeEvent);
             if (!valid.length) {
                 throw new Error('No valid events available after validation.');
             }
@@ -1258,7 +1307,11 @@
         }
     }
 
-    function loadActivities() {
+    function loadActivities(fileActivities = null) {
+        if (Array.isArray(fileActivities)) {
+            return fileActivities.filter(isValidActivityShape).slice(0, 100);
+        }
+
         const raw = localStorage.getItem(STORAGE_KEYS.activity);
         if (!raw) {
             return [];
@@ -1271,7 +1324,7 @@
             }
 
             return parsed
-                .filter((item) => item && typeof item.title === 'string' && Number.isFinite(item.timestamp))
+                .filter(isValidActivityShape)
                 .slice(0, 100);
         } catch (error) {
             backupCorruptedData(STORAGE_KEYS.activity, raw);
