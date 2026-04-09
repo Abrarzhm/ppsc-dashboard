@@ -89,6 +89,9 @@
 
         el.exportBtn = document.getElementById('exportBtn');
         el.printBtn = document.getElementById('printBtn');
+        el.saveJsonBtn = document.getElementById('saveJsonBtn');
+        el.importJsonBtn = document.getElementById('importJsonBtn');
+        el.importJsonInput = document.getElementById('importJsonInput');
 
         el.bankDropdownToggle = document.getElementById('bankDropdownToggle');
         el.systemDropdownToggle = document.getElementById('systemDropdownToggle');
@@ -172,6 +175,13 @@
         });
 
         el.exportBtn.addEventListener('click', exportCSV);
+        if (el.saveJsonBtn) {
+            el.saveJsonBtn.addEventListener('click', exportDataSnapshot);
+        }
+        if (el.importJsonBtn && el.importJsonInput) {
+            el.importJsonBtn.addEventListener('click', () => el.importJsonInput.click());
+            el.importJsonInput.addEventListener('change', importDataSnapshot);
+        }
         el.printBtn.addEventListener('click', () => {
             logActivity('report', 'Print view opened.');
             window.print();
@@ -916,6 +926,129 @@
 
         logActivity('report', 'CSV export generated.', `${visible.length} filtered rows exported`);
         showToast('Filtered report exported as CSV.', 'success');
+    }
+
+    async function exportDataSnapshot() {
+        const snapshot = {
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            events: state.events,
+            activities: state.activities
+        };
+        const content = JSON.stringify(snapshot, null, 2);
+        const now = new Date();
+        const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const fileName = `dashboard-data-${stamp}.json`;
+
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: fileName,
+                    types: [{
+                        description: 'JSON Files',
+                        accept: { 'application/json': ['.json'] }
+                    }]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(content);
+                await writable.close();
+                logActivity('report', 'JSON snapshot saved.', `${state.events.length} events saved to local file`);
+                showToast('Data file saved. Git can now detect the JSON file change.', 'success');
+                return;
+            } catch (error) {
+                if (error && error.name === 'AbortError') {
+                    return;
+                }
+            }
+        }
+
+        const blob = new Blob([content], { type: 'application/json;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+
+        logActivity('report', 'JSON snapshot exported.', `${state.events.length} events in snapshot`);
+        showToast('Data snapshot downloaded. Commit the JSON file to GitHub.', 'success');
+    }
+
+    function importDataSnapshot(event) {
+        const fileInput = event.target;
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const payload = JSON.parse(String(reader.result || '{}'));
+                const imported = validateImportedSnapshot(payload);
+                state.events = imported.events.map(normalizeEvent);
+                state.activities = imported.activities;
+                persistEvents();
+                safeWrite(STORAGE_KEYS.activity, state.activities);
+                state.pagination.page = 1;
+                resetFormMode();
+                renderAll();
+                logActivity('report', 'JSON snapshot imported.', `${state.events.length} events loaded from ${file.name}`);
+                showToast('JSON data imported successfully.', 'success');
+            } catch (error) {
+                showToast('Invalid JSON file. Please import a valid dashboard snapshot.', 'error', 5000);
+            } finally {
+                fileInput.value = '';
+            }
+        };
+
+        reader.onerror = () => {
+            showToast('Could not read the selected file.', 'error');
+            fileInput.value = '';
+        };
+
+        reader.readAsText(file);
+    }
+
+    function validateImportedSnapshot(payload) {
+        const eventValidator = (entry) => {
+            if (!entry || typeof entry !== 'object') {
+                return false;
+            }
+            const hasRequired = ['id', 'type', 'bank', 'system', 'impact', 'start', 'end'].every((field) => Boolean(entry[field]));
+            if (!hasRequired) {
+                return false;
+            }
+            const start = new Date(entry.start).getTime();
+            const end = new Date(entry.end).getTime();
+            return Number.isFinite(start) && Number.isFinite(end) && end > start;
+        };
+
+        const activityValidator = (entry) => entry && typeof entry.title === 'string' && Number.isFinite(entry.timestamp);
+
+        if (!payload || typeof payload !== 'object') {
+            throw new Error('Snapshot must be an object.');
+        }
+
+        if (!Array.isArray(payload.events)) {
+            throw new Error('Snapshot events array missing.');
+        }
+
+        const validEvents = payload.events.filter(eventValidator);
+        if (!validEvents.length) {
+            throw new Error('Snapshot has no valid events.');
+        }
+
+        const validActivities = Array.isArray(payload.activities)
+            ? payload.activities.filter(activityValidator).slice(0, 100)
+            : [];
+
+        return {
+            events: validEvents,
+            activities: validActivities
+        };
     }
 
     function toggleDropdown(type) {
